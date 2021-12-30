@@ -1,0 +1,145 @@
+version: "3.8"
+services:
+
+  # certbot:
+  #   container_name: certbot
+  #   hostname: certbot
+  #   image: certbot/certbot
+  #   entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; echo \"Renewing...\"; done;'"
+  #   volumes:
+  #     - "certbot-conf:/etc/letsencrypt"
+  #     - "certbot-www:/var/www/certbot"
+  
+  nginx:
+    container_name: nginx
+    hostname: nginx
+    image: nginx:alpine
+    restart: on-failure
+    entrypoint: [ "/bin/sh", "/docker-entrypoint.sh" ]
+    command: "/bin/sh -c '/usr/sbin/nginx -g \"daemon off;\" & while :; do sleep 6h & wait $${!}; echo \"Reloading...\"; /usr/sbin/nginx -s reload; done;' "
+    ports:
+      - 80:80
+      - 443:443
+      # - 1917:1917
+    expose:
+      - "80"
+      - "443"
+      # - "1917"
+    depends_on:
+      - node
+    networks:
+      - nginx-proxy
+      - default
+    volumes:
+      - "./nginx.conf:/etc/nginx/nginx.conf"
+      - "certbot-conf:/etc/letsencrypt"
+      - "certbot-www:/var/www/certbot"
+      - "./scripts/nginx-letsEncrypt-setup.sh:/scripts/nginx-letsEncrypt-setup.sh"
+
+  node:
+    container_name: node
+    hostname: node
+    build:
+      context: ../ # use parent dir containing all the projects
+      dockerfile: ./_apsalus-deploy/node.Dockerfile
+    restart: on-failure
+    command: "pm2-runtime start /home/node/app/pm2.config.js" # pm2-runtime (NOT pm2) or docker exits daemon
+    ports:
+      - 1337:1337
+    expose:
+      - "1337"
+    depends_on:
+      - redis-server
+      - mongo-2.mongo
+      - mongo-1.mongo
+      - mongo-0.mongo
+    networks:
+      - nginx-proxy
+      - default
+    volumes:
+      - "mongo-dump-data:/home/node/app/apsalus-app-next/_database-backups"
+      - "../apsalus-app-next:/home/node/app/apsalus-app-next"
+      - "./pm2.config.js:/home/node/app/pm2.config.js"
+      - "./scripts/node-setup.sh:/scripts/node-setup.sh"
+
+  redis-server:
+      container_name: redis-server
+      hostname: redis-server
+      image: "redis:5.0.8-alpine"
+      command: "redis-server --include /usr/local/etc/redis/redis.conf"
+      restart: on-failure
+      ports:
+        - "6379:6379"
+      expose:
+        - "6379"
+      networks:
+        - default
+      volumes:
+        - "./redis.conf:/usr/local/etc/redis/redis.conf"
+
+  mongo-2.mongo:
+      hostname: mongo-2.mongo
+      container_name: mongo-2.mongo
+      image: mongo
+      entrypoint: [ "/usr/bin/mongod", "--keyFile", "/data/replica.keyfile", "--replSet", "rsAPS", "--journal", "--bind_ip_all" ]
+      ports:
+        - "27019:27017"
+      expose:
+        - "27017"
+      restart: on-failure
+      networks:
+        - mongo-net
+        - default
+      volumes:
+        - "mongo-2-data:/data/db"
+        - "./replica.keyfile:/data/replica.keyfile"
+
+  mongo-1.mongo:
+      hostname: mongo-1.mongo
+      container_name: mongo-1.mongo
+      image: mongo
+      entrypoint: [ "/usr/bin/mongod", "--keyFile", "/data/replica.keyfile", "--replSet", "rsAPS", "--journal", "--bind_ip_all" ]
+      ports:
+        - "27018:27017"
+      expose:
+        - "27017"
+      restart: on-failure
+      networks:
+        - mongo-net
+        - default
+      volumes:
+        - "mongo-1-data:/data/db"
+        - "./replica.keyfile:/data/replica.keyfile"
+        
+  mongo-0.mongo:
+      hostname: mongo-0.mongo
+      container_name: mongo-0.mongo
+      image: mongo
+      entrypoint: [ "/usr/bin/mongod", "--keyFile", "/data/replica.keyfile", "--replSet", "rsAPS", "--journal", "--bind_ip_all" ]
+      ports:
+        - "27017:27017"
+      expose:
+        - "27017"
+      restart: on-failure
+      depends_on:
+        - mongo-2.mongo
+        - mongo-1.mongo
+      networks:
+        - mongo-net
+        - default
+      volumes:
+        - "mongo-0-data:/data/db"
+        - "./scripts/mongo-setup.sh:/scripts/mongo-setup.sh"
+        - "./replica.keyfile:/data/replica.keyfile"
+
+networks:
+  mongo-net:
+  nginx-proxy:
+
+volumes:
+  mongo-dump-data:
+  mongo-0-data:
+  mongo-1-data:
+  mongo-2-data:
+  certbot-conf:
+  certbot-www:
